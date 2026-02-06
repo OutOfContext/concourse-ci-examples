@@ -4,7 +4,6 @@ image_resource:
   type: registry-image
   source:
     repository: maven
-    tag: "3.9.9-eclipse-temurin-25"
 
 inputs:
   - name: app

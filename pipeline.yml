@@ -11,12 +11,6 @@ resources:
     source:
       uri: https://github.com/OutOfContext/demo-app.git
       branch: master
-  - name: docker-hub
-    type: registry-image
-    source:
-      repository: raffaelhu/demo-app
-      username: ((docker_username))
-      password: ((docker_password))
 
 jobs:
   - name: build
@@ -32,23 +26,3 @@ jobs:
         output_mapping:
           build: build_out
         timeout: 1m
-
-      - task: docker_build
-        file: repo/tasks/build/docker/task.yml
-        input_mapping:
-          build: build_out
-        output_mapping:
-          image: image_out
-        timeout: 1m
-
-      - task: docker_tag
-        file: repo/tasks/tag/docker/task.yml
-        input_mapping:
-          image: image_out
-        output_mapping:
-          image: image_final
-        timeout: 1m
-
-      - put: docker-hub
-        params:
-          build: image_final
