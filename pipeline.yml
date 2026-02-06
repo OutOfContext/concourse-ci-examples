@@ -13,16 +13,24 @@ resources:
       branch: master
 
 jobs:
-  - name: build
+  - name: build & test
     plan:
-      - get: repo
-      - get: app-repo
-        trigger: true
+      - in_parallel:
+        - get: repo
+        - get: app-repo
+          trigger: true
 
-      - task: build_java
-        file: repo/tasks/build/java/task.yml
-        input_mapping:
-          app: app-repo
-        output_mapping:
-          build: build_out
-        timeout: 1m
+      - in_parallel:
+        - task: build_java
+          file: repo/tasks/build/java/task.yml
+          input_mapping:
+            app: app-repo
+          output_mapping:
+            build: build_out
+          timeout: 1m
+
+        - task: test_java
+          file: repo/tasks/test/java/task.yml
+          input_mapping:
+            app: app-repo
+          timeout: 1m
