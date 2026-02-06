@@ -15,9 +15,15 @@ params:
 run:
   path: sh
   args:
-    - -exc
+    - -ec
     - |
-      echo "$MESSAGE"
+      if [ -n "$MESSAGE" ]; then
+        echo "MESSAGE is set"
+      else
+        echo "MESSAGE is empty" >&2
+        exit 1
+      fi
+
       date -u
       echo "OK" > out/result.txt
       ls -la out
