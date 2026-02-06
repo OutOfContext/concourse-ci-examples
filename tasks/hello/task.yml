@@ -18,7 +18,7 @@ run:
     - -ec
     - |
       if [ -n "$MESSAGE" ]; then
-        echo "$MESSAGE"
+        echo "Hier könnte ihre Werbung stehen."
       else
         echo "MESSAGE is empty" >&2
         exit 1
