@@ -19,6 +19,7 @@ run:
     - |
       if [ -n "$MESSAGE" ]; then
         echo "Hier könnte ihre Werbung stehen."
+        echo "Erhalte jetzt für nur 4.99€ Spotify Premium."
       else
         echo "MESSAGE is empty" >&2
         exit 1
