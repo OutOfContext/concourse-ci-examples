@@ -16,6 +16,6 @@ run:
   args:
     - -ec
     - |
-      cd app
+      ls -la
       mvn -B -DskipTests package
       cp target/*.jar ../build/app.jar
