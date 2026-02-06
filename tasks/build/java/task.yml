@@ -20,4 +20,4 @@ run:
       cd app/backend
       ls -la
       mvn -B -DskipTests package
-      cp target/*.jar ../build/app.jar
+      cp target/*.jar ../../build/app.jar
