@@ -18,7 +18,7 @@ run:
     - -ec
     - |
       if [ -n "$MESSAGE" ]; then
-        echo "MESSAGE is set"
+        echo "$MESSAGE"
       else
         echo "MESSAGE is empty" >&2
         exit 1
