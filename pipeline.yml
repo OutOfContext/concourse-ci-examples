@@ -13,7 +13,7 @@ resources:
       branch: master
 
 jobs:
-  - name: build & test
+  - name: build_n_test
     plan:
       - in_parallel:
         - get: repo
