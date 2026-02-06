@@ -11,5 +11,6 @@ jobs:
   - name: hello
     plan:
       - get: repo
+        trigger: true
       - task: hello
         file: repo/tasks/hello/task.yml
