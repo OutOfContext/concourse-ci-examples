@@ -10,7 +10,7 @@ outputs:
   - name: out
 
 params:
-  MESSAGE: ((hello.myvaultsec))
+  MESSAGE: ((myvaultsec))
 
 run:
   path: sh
