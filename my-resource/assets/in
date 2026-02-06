@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+DEST="$1"
+
+mkdir -p "$DEST"
+echo "hello concourse" > "$DEST/value.txt"
+
+cat <<EOF
+{
+  "version": { "version": "1" },
+  "metadata": [
+    { "name": "example", "value": "demo" }
+  ]
+}
+EOF
