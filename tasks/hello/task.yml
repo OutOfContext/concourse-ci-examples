@@ -1,0 +1,23 @@
+platform: linux
+
+image_resource:
+  type: registry-image
+  source:
+    repository: alpine
+    tag: "3.20"
+
+outputs:
+  - name: out
+
+params:
+  MESSAGE: "Hallo aus einem Task!"
+
+run:
+  path: sh
+  args:
+    - -exc
+    - |
+      echo "$MESSAGE"
+      date -u
+      echo "OK" > out/result.txt
+      ls -la out

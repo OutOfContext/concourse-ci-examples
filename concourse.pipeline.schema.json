@@ -1,0 +1,441 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://primiq.com/schemas/concourse/pipeline.json",
+  "title": "Concourse Pipeline",
+  "type": "object",
+  "description": "Concourse pipeline.yml\n\nThis schema is intended to be used for YAML authoring assistance (Ctrl+Space / Ctrl+Q) in IntelliJ-based IDEs. It focuses on the most common keys and the mental model behind them: resources represent external state, jobs define execution, and plans define steps.",
+  "additionalProperties": false,
+  "properties": {
+    "resources": {
+      "type": "array",
+      "description": "resources: Declares the resources that jobs can interact with.\n\nWhat it is: A resource is Concourse's abstraction for external state (Git repos, container registries, S3 buckets, notifications, etc.).\n\nHow jobs use it:\n- get: fetch a version into the build\n- put: publish/update a version\n- check: detect new versions (usually implicit, configured via check_every / webhooks)\n\nHow to configure: Each resource item has at least name, type, and source. The 'source' object is type-specific and forwarded to the resource implementation. Put secrets into ((vars)) instead of hardcoding them.",
+      "items": { "$ref": "#/definitions/resource" }
+    },
+    "resource_types": {
+      "type": "array",
+      "description": "resource_types: Declares custom resource types (resource implementations).\n\nUse this when you need a resource type that isn't built in, or when you want to pin to a specific implementation/version.\n\nTypical shape: the implementation is delivered as a container image (often via base type 'registry-image'); you then reference the resource type by name in resources[].type.",
+      "items": { "$ref": "#/definitions/resourceType" }
+    },
+    "jobs": {
+      "type": "array",
+      "description": "jobs: Declares the executable units of a pipeline.\n\nA job has a name and a plan (list of steps). It runs when triggered (e.g. trigger: true on a get step, manual trigger, or version constraints via passed).\n\nUse concurrency controls (serial / serial_groups / max_in_flight) to avoid overlapping deployments, and use hooks (on_success/on_failure/ensure) to run cleanup/notifications.",
+      "items": { "$ref": "#/definitions/job" }
+    },
+    "groups": {
+      "type": "array",
+      "description": "groups: Optional UI-only grouping of jobs in the Concourse dashboard.\n\nThis does not affect execution. It only changes how jobs are displayed in the web UI.",
+      "items": { "$ref": "#/definitions/group" }
+    },
+    "var_sources": {
+      "type": "array",
+      "description": "var_sources: Optional variable sources for resolving ((vars)).\n\nUse this to keep secrets and environment-specific values out of pipeline.yml.\n\nNote: var_sources declares *where* variables come from (Vault, etc.). The variables themselves live in that external system.",
+      "items": { "$ref": "#/definitions/varSource" }
+    },
+    "display": {
+      "type": "object",
+      "description": "display: Optional pipeline UI display configuration.\n\nThis is Concourse-version dependent and often not required. If you don't know you need it, you can usually omit it.",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "resource": {
+      "type": "object",
+      "description": "Resource item.\n\nRequired:\n- name: referenced by get/put steps\n- type: selects the resource implementation\n- source: type-specific configuration (credentials/URIs/etc.)\n\nBehavioral knobs:\n- check_every: poll interval\n- webhook_token: enable webhook-triggered checks (resource-specific)\n- tags: worker placement hints\n\nTip: The content of source depends entirely on the resource type. Concourse treats it as an opaque object.",
+      "required": ["name", "type", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique resource name. This is what you reference later using 'get: <name>' or 'put: <name>'.\n\nBest practice: choose stable, descriptive names (e.g. app-repo, image, version, slack).",
+          "examples": ["app-repo", "image", "slack"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Resource type name.\n\nBuilt-in examples: git, registry-image.\nCustom: if you defined a matching entry in resource_types, use its name here.\n\nThis controls which keys the 'source' object supports.",
+          "examples": ["git", "registry-image"]
+        },
+        "source": {
+          "type": "object",
+          "description": "Type-specific source configuration object.\n\nConcourse does not interpret the keys inside source. They are passed directly to the resource implementation.\n\nTypical contents: repository URI, branch, credentials, bucket name, region, project IDs, etc.\n\nSecurity tip: Put secrets into ((vars)) via var_sources/credentials management instead of hardcoding them.",
+          "additionalProperties": true
+        },
+        "check_every": {
+          "type": "string",
+          "description": "How often Concourse checks this resource for new versions.\n\nExamples: '10s', '1m', '10m', '1h'.\n\nLower values = faster detection but higher load on the Concourse scheduler and external systems.",
+          "examples": ["1m", "10m", "1h"]
+        },
+        "webhook_token": {
+          "type": "string",
+          "description": "Webhook token for triggering resource checks.\n\nSome resources offer a webhook endpoint so external systems (GitHub/GitLab/etc.) can trigger a check immediately.\nThis token authenticates the webhook request.",
+          "examples": ["((webhook_token))"]
+        },
+        "icon": {
+          "type": "string",
+          "description": "Optional icon name shown in the Concourse UI.\n\nThis does not affect execution. It's purely for readability.",
+          "examples": ["github", "docker"]
+        },
+        "public": {
+          "type": "boolean",
+          "description": "Expose versions publicly (depends on Concourse auth setup).\n\nUsually safe to omit. Set carefully in multi-tenant environments.",
+          "default": false
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Worker tags for placement.\n\nConcourse may schedule checks/gets/puts on workers that match these tags. Use this for OS/arch constraints or dedicated workers.",
+          "examples": [["linux", "amd64"]]
+        }
+      }
+    },
+    "resourceType": {
+      "type": "object",
+      "description": "resource_types item.\n\nA resource type defines a resource implementation (the code that knows how to check/get/put). In practice, resource types are almost always distributed as container images.\n\nWhen to use resource_types:\n- You need a resource type that Concourse doesn't ship with\n- You want to pin a specific version of a resource implementation\n- You want to use a fork/custom build of a resource\n\nHow it connects to resources:\n1) Define a resource type here with a unique name\n2) Reference it from resources[].type\n\nRequired fields:\n- name: identifier of the custom type\n- type: base type used to fetch/run the implementation (commonly 'registry-image')\n- source: configuration to fetch the implementation image (repository/tag/credentials, etc.)\n\nSecurity tip: Prefer ((vars)) for credentials. Avoid committing secrets into pipeline.yml.",
+      "required": ["name", "type", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique resource type name. Reference this name from resources[].type.",
+          "examples": ["slack", "custom-git", "semver"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Base resource type used to obtain/run the resource implementation.\n\nMost commonly: registry-image (pull a container image that implements the resource).",
+          "examples": ["registry-image"]
+        },
+        "source": {
+          "type": "object",
+          "description": "Type-specific source configuration for fetching the resource implementation image.\n\nExample (registry-image):\n- repository: image name\n- tag: version tag\n- username/password: registry credentials\n\nConcourse forwards this to the base resource type, just like a normal resource source.",
+          "additionalProperties": true
+        },
+        "privileged": {
+          "type": "boolean",
+          "description": "Whether to run this resource type in privileged mode.\n\nPrivileged containers have elevated access to the host. Only enable if the resource implementation explicitly requires it.",
+          "default": false
+        },
+        "params": {
+          "type": "object",
+          "description": "Optional parameters passed to the base resource type when running checks/gets for the resource type itself.\n\nThis is base-type-specific. For many setups you can omit it.\n\nTip: Don’t confuse this with resources[].params for get/put; this params configures the *resource type implementation* container.",
+          "additionalProperties": true
+        },
+        "check_every": {
+          "type": "string",
+          "description": "How often Concourse checks for updates of the resource type implementation image.\n\nIf you pin a tag (e.g. '1.2.3'), you can set a long interval or omit. If you track 'latest', consider a reasonable interval.",
+          "examples": ["1h", "24h"]
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Worker tags for placement when fetching/running the resource type implementation.\n\nUse this if your resource types must run on specific workers (OS/arch, network access, etc.).",
+          "examples": [["linux", "amd64"]]
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "description": "groups item.\n\nGroups are a Concourse UI feature to organize jobs on the dashboard. They do not change execution semantics.",
+      "required": ["name", "jobs"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Group name displayed in the UI.",
+          "examples": ["main", "deploy"]
+        },
+        "jobs": {
+          "type": "array",
+          "description": "List of job names included in this group.",
+          "items": { "type": "string" },
+          "examples": [["test", "build", "deploy"]]
+        }
+      }
+    },
+    "varSource": {
+      "type": "object",
+      "description": "var_sources item.\n\nDeclares an external variable source so Concourse can resolve ((vars)).\n\nRequired:\n- name: identifier of this source\n- type: implementation name (e.g. vault)\n- config: connection and configuration (type-specific)\n\nTip: Prefer injecting secrets through variable sources over hardcoding them in pipeline.yml.",
+      "required": ["name", "type", "config"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Variable source name.",
+          "examples": ["vault"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Variable source type (implementation). Common values depend on Concourse version/installation (e.g. vault, dummy).",
+          "examples": ["vault", "dummy"]
+        },
+        "config": {
+          "type": "object",
+          "description": "Type-specific config for connecting to the variable source (URL, auth, path prefixes, etc.).",
+          "additionalProperties": true
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "description": "jobs item.\n\nA job is executed by Concourse. It consists of a plan (steps).\n\nRecommended minimal keys:\n- name\n- plan\n\nConcurrency & scheduling:\n- serial: never run two builds of this job at the same time\n- serial_groups: coordinate concurrency across multiple jobs\n- max_in_flight: limit number of concurrent builds\n\nHooks:\n- on_success/on_failure/on_error/ensure: run additional steps based on outcome (notifications, cleanup).",
+      "required": ["name", "plan"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique job name.",
+          "examples": ["test", "build", "deploy"]
+        },
+        "plan": {
+          "type": "array",
+          "description": "Plan (list of steps) executed by the job.\n\nEach item is a step object. Typical steps are get/put/task and grouping steps like in_parallel/do/try.",
+          "items": { "$ref": "#/definitions/step" }
+        },
+        "public": {
+          "type": "boolean",
+          "description": "Whether job builds are publicly visible in the UI (depends on auth).",
+          "default": false
+        },
+        "serial": {
+          "type": "boolean",
+          "description": "If true, run only one build of this job at a time.\n\nUse for deployments or any job that must not overlap with itself.",
+          "default": false
+        },
+        "serial_groups": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Serial groups for shared serialization across jobs.\n\nJobs that share a serial group will not run concurrently (useful for multiple deploy jobs targeting the same environment).",
+          "examples": [["deploy-prod"]]
+        },
+        "max_in_flight": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of builds of this job that may run concurrently.\n\nUse this when the job *can* overlap but you want an upper bound (e.g. expensive test jobs).\n\nIf you want strictly one-at-a-time, prefer serial: true.",
+          "examples": [1, 2]
+        },
+        "disable_manual_trigger": {
+          "type": "boolean",
+          "description": "If true, the job cannot be manually triggered from the UI/CLI (only automatic triggers apply).\n\nUseful to prevent accidental deployments.",
+          "default": false
+        },
+        "interruptible": {
+          "type": "boolean",
+          "description": "If true, running builds of this job may be interrupted when a newer build is triggered.\n\nUseful for jobs where only the latest result matters (e.g. long-running tests on frequently updated branches).",
+          "default": false
+        },
+        "build_log_retention": {
+          "type": "object",
+          "description": "Build log retention policy.\n\nThis is a structured object whose shape depends on Concourse version. It controls how many builds/logs are kept.",
+          "additionalProperties": true
+        },
+        "on_success": { "$ref": "#/definitions/stepHook" },
+        "on_failure": { "$ref": "#/definitions/stepHook" },
+        "on_error": { "$ref": "#/definitions/stepHook" },
+        "ensure": { "$ref": "#/definitions/stepHook" }
+      }
+    },
+    "stepHook": {
+      "type": "object",
+      "description": "Hook step executed depending on outcome.\n\nShape: { do: [ <steps...> ] }.\n\nUse hooks for notifications (e.g. put: slack) and cleanup tasks.",
+      "additionalProperties": false,
+      "properties": {
+        "do": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/step" },
+          "description": "Steps to execute as the hook body."
+        }
+      },
+      "required": ["do"]
+    },
+    "step": {
+      "description": "A single plan step.\n\nMost steps are objects with a step-type key (get/put/task/in_parallel/do/try/set_pipeline/load_var/across).\n\nAdditionally, Concourse supports wrapper keys like timeout/attempts/tags that modify an inner step.\n\nRule of thumb: exactly one primary type key should be present in the object.",
+      "oneOf": [
+        { "$ref": "#/definitions/getStep" },
+        { "$ref": "#/definitions/putStep" },
+        { "$ref": "#/definitions/taskStep" },
+        { "$ref": "#/definitions/inParallelStep" },
+        { "$ref": "#/definitions/doStep" },
+        { "$ref": "#/definitions/tryStep" },
+        { "$ref": "#/definitions/setPipelineStep" },
+        { "$ref": "#/definitions/loadVarStep" },
+        { "$ref": "#/definitions/acrossStep" },
+        { "$ref": "#/definitions/timeoutStep" },
+        { "$ref": "#/definitions/attemptsStep" },
+        { "$ref": "#/definitions/tagsStep" }
+      ]
+    },
+    "setPipelineStep": {
+      "type": "object",
+      "description": "set_pipeline step: Create/update another pipeline from within a job.\n\nCommon use cases:\n- One pipeline manages another (bootstrapping)\n- Dynamic pipelines based on repo contents\n\nTypical usage:\n- set_pipeline: my-pipeline\n  file: repo/ci/pipeline.yml\n  vars: { some: var }\n  var_files: [repo/ci/vars.yml]\n\nNote: The exact keys/behavior can vary by Concourse version; this schema covers the common shape.",
+      "required": ["set_pipeline"],
+      "additionalProperties": false,
+      "properties": {
+        "set_pipeline": { "type": "string", "description": "Target pipeline name to set/update." },
+        "file": { "type": "string", "description": "Path to the pipeline YAML file (usually inside an input fetched via get)." },
+        "vars": { "type": "object", "description": "Inline variables for interpolating the pipeline definition.", "additionalProperties": true },
+        "var_files": { "type": "array", "items": { "type": "string" }, "description": "List of variable files to interpolate into the pipeline definition." },
+        "instance_vars": { "type": "object", "description": "Instance vars for instanced pipelines (if used).", "additionalProperties": true }
+      }
+    },
+    "loadVarStep": {
+      "type": "object",
+      "description": "load_var step: Load a variable value from a file into build-local vars.\n\nUse this to read generated data (JSON/YAML/raw) from the workspace and then reference it later in the plan via ((.:varname)) or similar Concourse syntax (version-dependent).\n\nTypical usage:\n- load_var: version\n  file: repo/version.txt\n  format: raw\n\nformat controls parsing (raw/json/yaml).",
+      "required": ["load_var"],
+      "additionalProperties": false,
+      "properties": {
+        "load_var": { "type": "string", "description": "Name of the var to load." },
+        "file": { "type": "string", "description": "File path to read from." },
+        "format": { "type": "string", "enum": ["raw", "json", "yaml"], "description": "Parsing format for the file contents.", "default": "raw" },
+        "reveal": { "type": "boolean", "description": "If true, the loaded value may be shown in build output (use carefully with secrets).", "default": false }
+      }
+    },
+    "acrossStep": {
+      "type": "object",
+      "description": "across step: Matrix/iteration functionality (advanced).\n\nThis lets you run a step multiple times across a set of values (like a build matrix).\n\nBecause across is advanced and has multiple shapes depending on Concourse version, this schema only documents the concept and keeps the structure permissive.",
+      "required": ["across"],
+      "additionalProperties": false,
+      "properties": {
+        "across": { "type": "array", "description": "Across variables/config (shape is Concourse-version dependent).", "items": { "type": "object", "additionalProperties": true } },
+        "do": { "type": "array", "description": "Steps to execute for each combination.", "items": { "$ref": "#/definitions/step" } },
+        "fail_fast": { "type": "boolean", "description": "If true, stop other iterations when one fails.", "default": false }
+      }
+    },
+    "timeoutStep": {
+      "type": "object",
+      "description": "timeout wrapper: Apply a timeout to an inner step.\n\nTypical usage:\n- timeout: 10m\n  do:\n    - task: slow-tests\n      file: repo/ci/tasks/tests.yml\n\nThis schema models timeout as a wrapper with an inner step under 'do' or 'step'. Exact shapes vary; keep it simple.",
+      "required": ["timeout"],
+      "additionalProperties": true,
+      "properties": {
+        "timeout": { "type": "string", "description": "Timeout duration (e.g. 10m, 1h)." },
+        "step": { "$ref": "#/definitions/step" },
+        "do": { "type": "array", "items": { "$ref": "#/definitions/step" } }
+      }
+    },
+    "attemptsStep": {
+      "type": "object",
+      "description": "attempts wrapper: Retry an inner step up to N times.\n\nTypical usage:\n- attempts: 3\n  task: flaky\n  file: repo/ci/tasks/flaky.yml\n\nUse this for transient failures (network, flaky external systems). Avoid masking real failures.",
+      "required": ["attempts"],
+      "additionalProperties": true,
+      "properties": {
+        "attempts": { "type": "integer", "minimum": 1, "description": "Number of attempts." },
+        "step": { "$ref": "#/definitions/step" }
+      }
+    },
+    "tagsStep": {
+      "type": "object",
+      "description": "tags wrapper: Force an inner step to run on workers with specific tags.\n\nTypical usage:\n- tags: [linux, gpu]\n  task: train\n  file: repo/ci/tasks/train.yml\n\nUseful for hardware/OS constraints.",
+      "required": ["tags"],
+      "additionalProperties": true,
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Worker tags." },
+        "step": { "$ref": "#/definitions/step" }
+      }
+    },
+    "getStep": {
+      "type": "object",
+      "description": "get step: Fetch a resource version into the build.\n\nTypical usage:\n- get: app-repo\n  trigger: true\n\nCommon options:\n- trigger: run the job when a new version appears\n- passed: constrain versions to those produced by other jobs\n- params: resource-type specific parameters\n- version: pin to a specific version or use selectors (e.g. every)",
+      "required": ["get"],
+      "additionalProperties": false,
+      "properties": {
+        "get": { "type": "string", "description": "Resource name to fetch (must match an entry in top-level resources)." },
+        "trigger": { "type": "boolean", "description": "If true, a new resource version triggers a new build of the job.", "default": false },
+        "passed": { "type": "array", "items": { "type": "string" }, "description": "Version constraint: only use versions that have passed the given job(s).", "examples": [["test"]] },
+        "params": { "type": "object", "description": "Resource-type specific parameters for the get.", "additionalProperties": true },
+        "version": {
+          "description": "Version selector. Often a string like 'every' or an object understood by the resource type.",
+          "oneOf": [
+            { "type": "string", "examples": ["every"] },
+            { "type": "object", "additionalProperties": true }
+          ]
+        },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Worker tags for placement.", "examples": [["linux"]] },
+        "timeout": { "type": "string", "description": "Step timeout like '1h'.", "examples": ["10m", "1h"] }
+      }
+    },
+
+    "putStep": {
+      "type": "object",
+      "description": "put step: Update a resource (publish something).\n\nTypical usage:\n- put: image\n  params: { image: build/image.tar }\n\nCommon options:\n- params: resource-type specific parameters\n- get_params: control the implicit get after put\n- inputs: which inputs to pass into the put container\n- timeout/tags: execution controls",
+      "required": ["put"],
+      "additionalProperties": false,
+      "properties": {
+        "put": { "type": "string", "description": "Resource name to update (must match top-level resources)." },
+        "params": { "type": "object", "description": "Resource-type specific parameters for the put (what to publish).", "additionalProperties": true },
+        "get_params": { "type": "object", "description": "Params used for the implicit get after put (resource-type specific).", "additionalProperties": true },
+        "inputs": {
+          "description": "Which inputs to pass to the put step. Options:\n- all: pass all inputs\n- detect: only pass inputs referenced by params\n- explicit list: pass only these input names",
+          "oneOf": [
+            { "type": "string", "enum": ["all", "detect"], "default": "detect" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Worker tags for placement.", "examples": [["linux"]] },
+        "timeout": { "type": "string", "description": "Step timeout like '1h'.", "examples": ["10m", "1h"] }
+      }
+    },
+
+    "taskStep": {
+      "type": "object",
+      "description": "task step: Run a task (a script/program inside a container).\n\nTwo ways to define the task:\n- file: point to a task.yml inside an input\n- config: inline the task config\n\nCommon fields:\n- params: env vars for the task\n- vars: interpolation vars for the task file\n- input_mapping/output_mapping: rename inputs/outputs\n- privileged: allow privileged mode (use sparingly)",
+      "required": ["task"],
+      "additionalProperties": false,
+      "properties": {
+        "task": { "type": "string", "description": "Task name (identifier).", "examples": ["unit", "build", "deploy"] },
+        "file": { "type": "string", "description": "Path to a task definition file inside an input (e.g. 'repo/ci/tasks/unit.yml')." },
+        "config": { "type": "object", "description": "Inline task config (alternative to file).", "additionalProperties": true },
+        "vars": { "type": "object", "description": "Variables for task file interpolation.", "additionalProperties": true },
+        "params": { "type": "object", "description": "Task parameters (environment variables).", "additionalProperties": true },
+        "input_mapping": { "type": "object", "description": "Rename inputs for the task.", "additionalProperties": true },
+        "output_mapping": { "type": "object", "description": "Rename outputs for the task.", "additionalProperties": true },
+        "image": { "type": "string", "description": "Shorthand to select an image resource (advanced/optional)." },
+        "privileged": { "type": "boolean", "description": "Run task in privileged container. Use only if required.", "default": false },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Worker tags for placement.", "examples": [["linux"]] },
+        "timeout": { "type": "string", "description": "Step timeout like '1h'.", "examples": ["10m", "1h"] }
+      }
+    },
+
+    "inParallelStep": {
+      "type": "object",
+      "description": "in_parallel step: Run steps in parallel.\n\nYou can provide either:\n- a list of steps\n- or an object with { steps, limit, fail_fast }\n\nUse this to speed up independent work (e.g. run lint + tests at the same time).",
+      "required": ["in_parallel"],
+      "additionalProperties": false,
+      "properties": {
+        "in_parallel": {
+          "description": "Parallel steps configuration.",
+          "oneOf": [
+            { "type": "array", "items": { "$ref": "#/definitions/step" } },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "steps": { "type": "array", "items": { "$ref": "#/definitions/step" }, "description": "Steps to run." },
+                "limit": { "type": "integer", "minimum": 1, "description": "Max parallelism. If omitted, Concourse decides." },
+                "fail_fast": { "type": "boolean", "description": "If true, fail fast on first failure.", "default": false }
+              },
+              "required": ["steps"]
+            }
+          ]
+        }
+      }
+    },
+
+    "doStep": {
+      "type": "object",
+      "description": "do step: Run a list of steps in sequence as a group.\n\nUse this to group steps together (also useful inside hooks or try).",
+      "required": ["do"],
+      "additionalProperties": false,
+      "properties": {
+        "do": { "type": "array", "items": { "$ref": "#/definitions/step" }, "description": "Steps to execute in order." }
+      }
+    },
+
+    "tryStep": {
+      "type": "object",
+      "description": "try step: Try a step; failure does not fail the build.\n\nUse this for optional steps (e.g. best-effort notifications).",
+      "required": ["try"],
+      "additionalProperties": false,
+      "properties": {
+        "try": { "$ref": "#/definitions/step" }
+      }
+    }
+
+  }
+}
