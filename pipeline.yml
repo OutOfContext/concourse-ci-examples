@@ -10,5 +10,6 @@ resources:
 jobs:
   - name: hello
     plan:
+      - get: repo
       - task: hello
-        file: tasks/hello/task.yml
+        file: repo/tasks/hello/task.yml
