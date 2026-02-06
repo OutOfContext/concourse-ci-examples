@@ -10,7 +10,7 @@ outputs:
   - name: out
 
 params:
-  MESSAGE: "Hallo aus einem Task!"
+  MESSAGE: ((myvaultsec))
 
 run:
   path: sh
