@@ -1,0 +1,20 @@
+platform: linux
+
+image_resource:
+  type: registry-image
+  source:
+    repository: eclipse-temurin
+    tag: "25-jdk"
+
+inputs:
+  - name: app
+
+outputs:
+  - name: build
+
+run:
+  path: sh
+  args:
+    - -ec
+    - |
+      mvn -B -DskipTests package

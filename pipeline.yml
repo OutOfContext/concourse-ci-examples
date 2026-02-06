@@ -6,11 +6,49 @@ resources:
     source:
       uri: https://github.com/OutOfContext/concourse-ci-examples.git
       branch: master
+  - name: app-repo
+    type: git
+    source:
+      uri: https://github.com/OutOfContext/demo-app.git
+      branch: master
+  - name: docker-hub
+    type: registry-image
+    source:
+      repository: raffaelhu/demo-app
+      username: ((docker_username))
+      password: ((docker_password))
 
 jobs:
-  - name: hello
+  - name: build
     plan:
       - get: repo
+      - get: app-repo
         trigger: true
-      - task: hello
-        file: repo/tasks/hello/task.yml
+
+      - task: build_java
+        file: repo/tasks/build/java/task.yml
+        input_mapping:
+          - app: app-repo
+        output_mapping:
+          - build: build_out
+        timeout: 1m
+
+      - task: docker_build
+        file: repo/tasks/build/docker/task.yml
+        input_mapping:
+          - build: build_out
+        output_mapping:
+          - image: image_out
+        timeout: 1m
+
+      - task: docker_tag
+        file: repo/tasks/tag/docker/task.yml
+        input_mapping:
+          - image: image_out
+        output_mapping:
+          - image: image_final
+        timeout: 1m
+
+      - put: docker-hub
+        params:
+          build: image_final
